@@ -1,0 +1,31 @@
+{
+  "name": "dsh-session-export",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Export a DeepSeek Harness session transcript as Markdown, HTML, or JSON with per-turn and per-event-type selection",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "README.md"
+  ],
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "install:plugin": "node scripts/install.mjs",
+    "uninstall:plugin": "node scripts/install.mjs --uninstall"
+  }
+}
