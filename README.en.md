@@ -109,6 +109,11 @@ The file name is generated server-side: `dsh-session-<session-id>-<YYYYMMDD-HHmm
 
 **HTML** — one file, inline styles, no external resources: easy to send to someone or open offline. It follows the system light/dark theme, has a table of contents at the top, and — with “Embed images in HTML” enabled — inlines images as data URIs under a total byte budget, falling back to a placeholder note beyond it.
 
+> **How message content is treated**
+>
+> - **User messages go into a code block** (tagged `text`): your prompt is preserved exactly, including its own `#` headings, lists, code fences, tables and leading indentation. The surrounding backticks **grow automatically** (three backticks in the prompt means four around it), so a fence inside a prompt is neither parsed nor able to swallow what follows.
+> - **Assistant replies, injected context and thinking** are still rendered as Markdown (lists, code blocks and emphasis survive), but their headings are **shifted down** (`#` → `####`, `##` → `#####`), so they never sit beside the export's own `#` title or `## Turn N` sections.
+
 **JSON** — the raw event array, filtered by your selection, for further processing. Events keep the session log's exact shape (`type` / `seq` / `time` / `data`).
 
 ```json
@@ -176,6 +181,7 @@ Override the defaults from the profile's `cordis.patch.yml`:
 | A turn disappeared | That turn was filtered down to nothing; Markdown / HTML skip it (JSON keeps `events: []`) |
 | The dialog shows a red error | The session log could not be read, or the session was removed; adjust and hit “Retry” |
 | I only want the last few turns | Hit “Select none”, then tick the turns you want, or filter by turn number / keyword |
+| My prompt contains `#`, a code block or a table — will it become part of the export? | No. User messages are rendered as a code block, so that syntax is never parsed |
 | Can I export twice? | Yes — the dialog stays open; change the format or selection and click “Export” again |
 
 ## Known limitations

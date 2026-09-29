@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import { normalizeConfig } from '../lib/config.js';
 import { buildPlan, buildJsonDocument, buildViewDocument, segmentTurns } from '../lib/model.js';
-import { escapeHtml, inlineMarkdown, markdownToHtml, safeUrl } from '../lib/markdown.js';
+import { demoteHeadings, escapeHtml, inlineMarkdown, markdownToHtml, safeUrl } from '../lib/markdown.js';
 import { fencedBlock, formatBytes, formatTimestamp, labelsFor, prettyJson, renderHtml, renderJson, renderMarkdown } from '../lib/render.js';
 import { ALL_SECTIONS, VIEW_SECTIONS, sessionEvents, sessionHeader, XSS_PAYLOAD } from './fixtures.js';
 
@@ -151,8 +151,175 @@ test('renderMarkdown emits header, turns, thinking, tool traffic, and attachment
   assert.match(md, /##### ✅ 结果 · `read`/u);
   assert.match(md, /> 🖼 shot.png · image\/png · 10×20 · 1.2 KB/u);
   assert.match(md, /## 轮次 3 · .* · 进行中/u);
-  assert.match(md, new RegExp(XSS_PAYLOAD.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
+  // The prompt is fenced verbatim: the payload stays inert source text inside the
+  // code block instead of reaching the document as live markup.
+  assert.match(md, /```text\n再解释一下 <script>alert\("xss"\)<\/script>\n```/u);
   assert.equal(md.endsWith('\n'), true);
+});
+
+/**
+ * Headings the export itself contributes. Lines inside a fenced block are content,
+ * not document structure, so they are skipped (closers must be at least as long as
+ * the opener, which is how our own fences are built).
+ * @param markdown - a rendered Markdown artifact.
+ * @returns the outline lines in order.
+ */
+function outlineOf(markdown) {
+  const out = [];
+  let fence = 0;
+  for (const line of markdown.split('\n')) {
+    const fenceLine = /^\s*(`{3,})(.*)$/u.exec(line);
+    if (fence === 0) {
+      if (fenceLine !== null) {
+        fence = fenceLine[1].length;
+        continue;
+      }
+      if (/^#{1,6} /u.test(line)) out.push(line);
+      continue;
+    }
+    if (fenceLine !== null && fenceLine[2].trim() === '' && fenceLine[1].length >= fence) fence = 0;
+  }
+  return out;
+}
+
+/** Build a view document from synthetic events. */
+function viewFromEvents(events, overrides = {}) {
+  const config = normalizeConfig(undefined);
+  const plan = buildPlan({ header: sessionHeader(), title: null, inheritedEventCount: 0, events, config, attachmentsAvailable: false });
+  return buildViewDocument({
+    plan,
+    segments: segmentTurns(events),
+    selection: {
+      format: 'md',
+      turns: null,
+      includePreamble: false,
+      sections: { ...ALL_SECTIONS },
+      maxToolResultChars: 20000,
+      embedImages: true,
+      collapseThinking: true,
+      language: 'zh',
+      ...overrides,
+    },
+    generatedAt: 1700000000000,
+  }).doc;
+}
+
+/** A prompt that uses every Markdown construct that could restructure a document. */
+const MARKDOWN_PROMPT = [
+  '# 我的标题',
+  '',
+  '- 列表项一',
+  '- 列表项二',
+  '',
+  '```js',
+  'const a = 1;',
+  '```',
+  '',
+  '> 引用我自己的话',
+  '',
+  '| a | b |',
+  '| - | - |',
+  '',
+  '**粗体** 与 [链接](https://evil.example)',
+  '',
+  '1. 第一条',
+  '',
+  '---',
+  '',
+  '<script>alert(1)</script>',
+].join('\n');
+
+/** One turn whose prompt carries MARKDOWN_PROMPT and whose reply carries headings. */
+function markdownBombEvents() {
+  return [
+    { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+    {
+      type: 'user/message',
+      seq: 1,
+      time: 2,
+      data: { role: 'user', id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: MARKDOWN_PROMPT }] },
+    },
+    {
+      type: 'assistant/message',
+      seq: 2,
+      time: 3,
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          role: 'assistant',
+          id: 'a1',
+          source: { kind: 'model', provider: 'p', model: 'm' },
+          content: [{ type: 'text', text: '## 助手标题\n\n正文。\n\n另一个标题\n===' }],
+        },
+        stream: [],
+      },
+    },
+    { type: 'turn/end', seq: 3, time: 4, data: { turn: 1, reason: { kind: 'completed' } } },
+  ];
+}
+
+test('a user prompt cannot restructure the exported Markdown', () => {
+  const md = renderMarkdown(viewFromEvents(markdownBombEvents()));
+  // The document outline holds only the export's own headings.
+  assert.deepEqual(outlineOf(md), [
+    '# session-1111-2222',
+    '## 轮次 1 · 1970-01-01 00:00:00 UTC · completed',
+    '### 👤 用户',
+    '### 🤖 助手',
+    '##### 助手标题',
+    '#### 另一个标题',
+  ]);
+  // The prompt travels byte for byte inside one code fence. The wrapper uses four
+  // backticks because the prompt itself contains a three-backtick fence, so the
+  // payload's own fences cannot close it early.
+  const fenced = /^````text\n([\s\S]*?)\n````$/mu.exec(md);
+  assert.notEqual(fenced, null);
+  assert.equal(fenced[1], MARKDOWN_PROMPT);
+  // …placed under its own heading, so nothing inside it becomes document structure.
+  assert.equal(md.indexOf('### 👤 用户') < md.indexOf('```text'), true);
+});
+
+test('a prompt that contains a fence gets a longer fence around it', () => {
+  const text = 'a\n```\nb\n````\nc';
+  const md = renderMarkdown(viewFromEvents([
+    { type: 'turn/start', seq: 0, time: 1000, data: { turn: 1 } },
+    { type: 'user/message', seq: 1, time: 1001, data: { role: 'user', id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text }] } },
+    { type: 'turn/end', seq: 2, time: 1002, data: { turn: 1, reason: { kind: 'completed' } } },
+  ]));
+  // The longest backtick run inside is 4, so the wrapper uses 5 and cannot close early.
+  assert.match(md, /`````text\na\n```\nb\n````\nc\n`````/u);
+});
+
+test('rendered content headings stay below the transcript skeleton', () => {
+  const md = renderMarkdown(viewFromEvents(markdownBombEvents()));
+  // `## x` (2) and setext `===` (1) shift by CONTENT_HEADING_OFFSET (3).
+  assert.equal(md.includes('##### 助手标题'), true);
+  assert.equal(md.includes('#### 另一个标题'), true);
+  assert.equal(md.includes('\n## 助手标题'), false);
+});
+
+test('demoteHeadings shifts ATX and setext headings', () => {
+  assert.equal(demoteHeadings('# a\n## b\n### c\n#### d'), '#### a\n##### b\n###### c\n###### d');
+  assert.equal(demoteHeadings('t\n==='), '#### t');
+  assert.equal(demoteHeadings('t\n---'), '##### t');
+  // A rule after a blank line, after a fence, or after a list stays a rule.
+  assert.equal(demoteHeadings('text\n\n---'), 'text\n\n---');
+  assert.equal(demoteHeadings('```\n---\n```'), '```\n---\n```');
+  assert.equal(demoteHeadings('- item\n---'), '- item\n---');
+});
+
+test('a user prompt cannot inject structure into the exported HTML', () => {
+  const html = renderHtml(viewFromEvents(markdownBombEvents()));
+  const userSection = /<section class="ev ev-user"[\s\S]*?<\/section>/u.exec(html);
+  assert.notEqual(userSection, null);
+  assert.match(userSection[0], /<pre class="md-code" data-lang="text"><code>/u);
+  assert.equal(/<(?:h1|h2|h4|h5|h6|ul|ol|blockquote|table|script)[\s>/]/u.test(userSection[0]), false);
+  assert.match(userSection[0], /&lt;script&gt;alert\(1\)&lt;\/script&gt;/u);
+  // The reply's own headings are shifted under the section heading.
+  assert.match(html, /<h5>助手标题<\/h5>/u);
+  assert.match(html, /<h4>另一个标题<\/h4>/u);
+  assert.equal(/<h1>助手标题<\/h1>/u.test(html), false);
 });
 
 test('renderMarkdown reports skipped turns and honors the English chrome', () => {
