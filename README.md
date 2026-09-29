@@ -1,3 +1,5 @@
+[English](README.en.md) | 简体中文
+
 # dsh-session-export
 
 把 DeepSeek Harness 的会话导出为 **Markdown / HTML / JSON**，并且可以自由选择导出哪些**轮次**、哪些**事件类型**。
@@ -182,3 +184,7 @@ YAML
 - HTML 里的 Markdown 渲染为内置子集（标题、围栏代码、引用、列表、分隔线、段落、行内代码/粗体/斜体/删除线/链接）；表格、脚注、数学公式、原始 HTML 会按转义文本输出。
 - 导出会把会话日志读入内存，因此超大会话受「工具结果最大字符数」与产物字节上限约束。
 - 轮次数量超过 `maxTurns` 时需要先缩小选择范围。
+
+## 许可证
+
+[MIT](LICENSE)
