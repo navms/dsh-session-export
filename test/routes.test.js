@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { PLAN_PATH, RENDER_PATH } from '../lib/config.js';
+import { PLAN_PATH, PLUGIN_VERSION, RENDER_PATH } from '../lib/config.js';
 import { apply, inject, name } from '../lib/index.js';
 import { sessionSnapshot, XSS_PAYLOAD } from './fixtures.js';
 
@@ -121,7 +121,7 @@ test('the plan route returns picker metadata', async () => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /application\/json/u);
   const body = await json(response);
-  assert.deepEqual(body.plugin, { name: 'dsh-session-export', version: '0.1.0' });
+  assert.deepEqual(body.plugin, { name: 'dsh-session-export', version: PLUGIN_VERSION });
   assert.equal(body.session.id, 'session-1111-2222');
   assert.equal(body.session.title, '示例会话');
   assert.equal(body.turns.length, 3);

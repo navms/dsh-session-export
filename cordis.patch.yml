@@ -1,0 +1,15 @@
+# dsh-session-export bundle patch.
+#
+# This is the layer the package contributes once its name appears in a profile's
+# `dsh.profile.bundles`. Adding the dependency is not enough: pnpm only puts the
+# files under `node_modules`, while this `insert` is what mounts the export
+# routes on the profile's Cordis Loader tree. That is exactly the split the
+# Desktop and Web Plugins panels rely on when they install a plugin from a
+# GitHub link, and why a package without `dsh.bundle` installs but never loads.
+#
+# One row only, named after the package, so the profile's own
+# `cordis.patch.yml` can still address it by id and override its `config`.
+
+- insert:
+    - id: session-transcript-export
+      name: 'dsh-session-export'
