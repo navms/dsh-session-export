@@ -19,7 +19,7 @@ Data is read straight from the session log on local disk (the event array behind
 | Advanced options | Max tool-result characters, embed images in HTML, collapse thinking blocks |
 | Reusable panel | The dialog stays open after an export, so you can switch format or selection and export again in one session |
 | Safe by default | The HTML export escapes first and then renders, so `<script>`, `</style>`, `javascript:` links and `onerror=` inside session text cannot escape |
-| Tiny footprint | The plugin declares no runtime dependencies; installing it is one symlink plus one config line |
+| Tiny footprint | No runtime dependencies; it ships as a DSH bundle, so installing it puts the package in the profile's `node_modules` and adds one row to `dsh.profile.bundles` |
 
 **Only “User messages” and “Assistant messages” are enabled by default**, so the first export is a clean conversation transcript. Thinking, tool calls/results, images, file attachments, injected context, token usage, turn/step markers, failed attempts, raw stream records and other events all start disabled — tick them in the dialog when you need them.
 
@@ -43,47 +43,114 @@ Data is read straight from the session log on local disk (the event array behind
 
 ## Requirements
 
-- DeepSeek Harness with the Web profile (`dsh web` / `dsh --profile web`)
-- Node.js ≥ 22 for the install script (the plugin itself starts no extra process inside Harness)
+- DeepSeek Harness **Desktop** (which owns the built-in `desktop` profile) or the **Web profile** (`dsh web`). Both render the same web client, so the plugin behaves identically on either.
+- Node.js ≥ 20 for the install script (matching `package.json` `engines`; the plugin itself runs inside the Harness process and starts nothing extra).
+- The plugin ships as a **DSH bundle**: `package.json` declares `dsh.bundle.patch`, and the package's own `cordis.patch.yml` carries the Loader row to mount. That is what lets the Desktop and Web Plugins panels install it straight from a GitHub link.
 
 ## Installation
 
+The easy path is inside the app: open the **Plugins** panel and install the repository URL.
+
+```
+https://github.com/navms/dsh-session-export
+```
+
+The panel runs `pnpm add` to put the package in the current profile's `node_modules`, records it in
+`dsh.profile.bundles`, and the package's own `cordis.patch.yml` then applies as one bundle layer that
+mounts the export routes and the session-header button. **Reload the window with Cmd/Ctrl+R when it finishes.**
+
+### Command-line installation
+
+If you would rather script it, the installer offers two routes:
+
 ```sh
-git clone git@github.com:navms/dsh-session-export.git
-# or: git clone https://github.com/navms/dsh-session-export.git
+# 1) Install from GitHub: runs pnpm add, exactly like the Plugins panel
+node scripts/install.mjs --github
+#   Without a value the spec comes from package.json's repository; or name it:
+node scripts/install.mjs --github https://github.com/navms/dsh-session-export
+node scripts/install.mjs --github github:navms/dsh-session-export
+
+# 2) Clone locally and symlink: edits take effect immediately, best for development
+git clone https://github.com/navms/dsh-session-export.git
 cd dsh-session-export
 node scripts/install.mjs
 ```
 
-The installer does two things (idempotent, safe to re-run):
+Both routes do the same two things (idempotent, safe to re-run):
 
-1. Creates a symlink to this directory under `$DSH_HOME/profiles/web/node_modules/`;
-2. Appends the plugin entry to `$DSH_HOME/profiles/web/cordis.patch.yml` (backed up to `*.dsh-session-export.bak` before its first change).
+1. put the package under the profile's `node_modules` (`--github` leaves this to pnpm; the default symlinks this working copy);
+2. add the package name to `dsh.profile.bundles` in `$DSH_HOME/profiles/<profile>/package.json`.
+
+Without `--profile`, the target is chosen from `$DSH_PROFILE`, then an existing `desktop`, then an existing
+`web`, then `desktop` — so a bare invocation lands on the profile the Desktop app uses.
 
 Useful flags:
 
 ```sh
-node scripts/install.mjs --dry-run            # print the actions without writing anything
-node scripts/install.mjs --profile web        # target another profile (default: web)
-node scripts/install.mjs --home /path/to/.dsh # target another Harness home (default: $DSH_HOME or ~/.dsh)
-node scripts/install.mjs --uninstall          # remove the symlink and the config entry, restoring the original file byte for byte
+node scripts/install.mjs --dry-run             # print every action without writing anything
+node scripts/install.mjs --profile web         # target another profile (default: desktop)
+node scripts/install.mjs --home /path/to/.dsh  # target another Harness home (default: $DSH_HOME or ~/.dsh)
+node scripts/install.mjs --dsh /path/to/dsh    # harness CLI used by --github (default: $DSH_BIN, then dsh on PATH)
+node scripts/install.mjs --pnpm /path/to/pnpm  # force a direct pnpm install (default: $DSH_PNPM, then pnpm on PATH)
+node scripts/install.mjs --uninstall           # remove the link/dependency, the bundle entry, and any legacy row
 ```
 
-After installing or updating, **restart `dsh web` and refresh the browser page**.
+`--github` prefers `dsh plugin --profile <profile> add <spec>`: that brings the pnpm the installation
+ships, plus the profile write lock, failure rollback and bundle activation — and only the Desktop app's own
+launcher may touch the reserved `desktop` profile. With no CLI in reach it falls back to a direct
+`pnpm add` followed by its own bundle registration; passing `--pnpm` skips the CLI entirely.
+
+> The Desktop app's CLI lives at `<app>/Contents/Resources/runtime/cli/bin/dsh`
+> (on macOS: `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`).
+> If the `dsh` on your PATH points somewhere else or is stale, name it with `--dsh`.
+
+After installing or updating, **reload the window**: Cmd/Ctrl+R on Desktop, or refresh the browser page.
+
+> Earlier versions inserted the Loader row directly into the profile's `cordis.patch.yml`. The installer now
+> uses the bundle layer and migrates that row away — leaving both in place would insert the same row id twice.
 
 ### Manual installation
 
-If you prefer not to run the script:
+The script's first two steps, by hand:
 
 ```sh
-ln -s "$PWD" ~/.dsh/profiles/web/node_modules/dsh-session-export
-cat >> ~/.dsh/profiles/web/cordis.patch.yml <<'YAML'
+PROFILE=~/.dsh/profiles/desktop        # use web for the browser profile
+mkdir -p "$PROFILE/node_modules"
+ln -s "$PWD" "$PROFILE/node_modules/dsh-session-export"
+```
+
+Then append `dsh-session-export` to `dsh.profile.bundles` in `$PROFILE/package.json`:
+
+```json
+{
+  "dsh": {
+    "profile": {
+      "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-session-export"]
+    }
+  }
+}
+```
+
+You can also bypass the bundle mechanism and insert the row directly into the profile's `cordis.patch.yml`
+(the package still has to resolve from `node_modules`):
+
+```sh
+cat >> "$PROFILE/cordis.patch.yml" <<'YAML'
 
 - insert:
     - id: session-transcript-export
       name: 'dsh-session-export'
 YAML
 ```
+
+## Uninstalling
+
+```sh
+node scripts/install.mjs --uninstall
+```
+
+This removes the symlink or profile dependency, the `dsh.profile.bundles` entry, and the row older versions
+left in `cordis.patch.yml`. On Desktop you can also disable or remove the plugin from the Plugins panel.
 
 ## Usage
 
@@ -121,7 +188,7 @@ The file name is generated server-side: `dsh-session-<session-id>-<YYYYMMDD-HHmm
   "format": "dsh-session-transcript",
   "version": 1,
   "exportedAt": "2026-09-29T04:13:20.000Z",
-  "generator": { "name": "dsh-session-export", "version": "0.1.0" },
+  "generator": { "name": "dsh-session-export", "version": "0.2.0" },
   "selection": {
     "format": "json",
     "turns": [1, 2],
@@ -157,7 +224,8 @@ Filtering rules: turning off “Raw stream records” deletes `data.stream`, tur
 
 ## Configuration
 
-Override the defaults from the profile's `cordis.patch.yml`:
+Override the defaults from the profile's `cordis.patch.yml`. The bundle layer already declares the
+`session-transcript-export` row, so the profile's patch addresses it by id:
 
 ```yaml
 - id: session-transcript-export
@@ -176,6 +244,10 @@ Override the defaults from the profile's `cordis.patch.yml`:
 
 | Question | Answer |
 |---|---|
+| The Plugins panel says it is installed, but there is no export button in the session header | The package must declare `dsh.bundle` **and** be recorded in the profile's `dsh.profile.bundles`. The panel does that for you; a manual `pnpm add` does not, so add the entry yourself (or use `node scripts/install.mjs --github`). Check that `dsh.profile.bundles` in `~/.dsh/profiles/desktop/package.json` lists `dsh-session-export` |
+| The panel reports “Cannot access GitHub” or a connection timeout | A GitHub URL or a `.tgz` link is not fetched through the registry, so this machine has to reach `github.com` directly (or through a proxy). You can also `git clone` elsewhere and install with `node scripts/install.mjs`, which only symlinks |
+| I installed it and nothing happened | Reload the window (Cmd/Ctrl+R on Desktop, refresh in the browser) so the new client bundle enters `window.__DSH_BOOT__` |
+| An error about the same row id being inserted twice | The profile's `cordis.patch.yml` still holds the `session-transcript-export` row that earlier versions inserted; delete it, or re-run `node scripts/install.mjs`, which migrates it automatically |
 | I ticked “Session preamble” but nothing shows up | Preamble events all belong to “Other events”; tick that one too |
 | Images are missing from the export | “Images” is off by default, and an image-only message exports nothing while it is off |
 | A turn disappeared | That turn was filtered down to nothing; Markdown / HTML skip it (JSON keeps `events: []`) |
@@ -191,6 +263,7 @@ Override the defaults from the profile's `cordis.patch.yml`:
 - Markdown inside the HTML export is rendered by a built-in subset (headings, fenced code, quotes, lists, rules, paragraphs, inline code/bold/italic/strikethrough/links); tables, footnotes, math and raw HTML come out as escaped text.
 - An export loads the whole session log into memory, so very large sessions are bounded by “Max tool-result characters” and the artifact byte cap.
 - More than `maxTurns` turns requires narrowing the selection first.
+- The plugin declares an optional peer range on `@deepseek-ai/dsh` (via `peerDependenciesMeta.optional`, so pnpm never installs it). When the running Harness falls outside that range, Harness **skips** this bundle layer and asks for an exact-version exemption instead of loading against an API that may have moved on.
 
 ## License
 
